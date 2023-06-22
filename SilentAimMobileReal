@@ -1,0 +1,226 @@
+
+if getgenv().Aiming then return getgenv().Aiming end
+
+-- // Services
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local GuiService = game:GetService("GuiService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- // Vars
+local Heartbeat = RunService.Heartbeat
+local LocalPlayer = Players.LocalPlayer
+local CurrentCamera = Workspace.CurrentCamera
+
+-- // Silent Aim Vars
+local Aiming = {
+    Enabled = true,
+
+    ShowFOV = true,
+    FOV = 60,
+    FOVSides = 12,
+    FOVColour = Color3.fromRGB(231, 84, 128),
+
+    VisibleCheck = true,
+
+    HitChance = 100,
+
+    Selected = nil,
+    SelectedPart = nil,
+    SelectedPosition = nil,
+    SelectedPositionOnScreen = nil,
+
+    TargetPart = {"Head", "HumanoidRootPart"},
+
+    Ignored = {
+        Teams = {
+            {
+                Team = LocalPlayer.Team,
+                TeamColor = LocalPlayer.TeamColor,
+            },
+        },
+        Players = {
+            LocalPlayer,
+            91318356
+        }
+    },
+
+    RaycastIgnore = nil,
+}
+getgenv().Aiming = Aiming
+
+-- // Create circle
+local circle = Drawing.new("Circle")
+circle.Transparency = 1
+circle.Thickness = 2
+circle.Color = Aiming.FOVColour
+circle.Filled = false
+Aiming.FOVCircle = circle
+
+-- // Update
+function Aiming.UpdateFOV()
+    -- // Make sure the circle exists
+    if not circle then
+        return
+    end
+
+    -- // Set Circle Properties
+    circle.Visible = Aiming.ShowFOV
+    circle.Radius = Aiming.FOV * 3
+    circle.Position = Vector2.new(CurrentCamera.ViewportSize.X / 2, CurrentCamera.ViewportSize.Y / 2)
+    circle.NumSides = Aiming.FOVSides
+    circle.Color = Aiming.FOVColour
+
+    -- // Return circle
+    return circle
+end
+
+-- // Custom Functions
+local CalcChance = function(percentage)
+    -- // Floor the percentage
+    percentage = math.floor(percentage)
+
+    -- // Get the chance
+    local chance = math.floor(Random.new().NextNumber(Random.new(), 0, 1) * 100) / 100
+
+    -- // Return
+    return chance <= percentage / 100
+end
+
+-- // Customisable Checking Functions: Is a part visible
+function Aiming.IsPartVisible(Part, PartDescendant)
+    -- // Vars
+    local Character = LocalPlayer.Character
+    local Origin = CurrentCamera.CFrame.Position
+    local _, OnScreen = CurrentCamera:WorldToViewportPoint(Part.Position)
+
+    -- // Check if the part is on the screen
+    if OnScreen then
+        -- // Vars
+        local raycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+        raycastParams.FilterDescendantsInstances = Aiming.RaycastIgnore or {Character, CurrentCamera}
+
+        -- // Cast ray
+        local Result = Workspace:Raycast(Origin, Part.Position - Origin, raycastParams)
+
+        -- // Make sure we get a result
+        if Result then
+            -- // Vars
+            local PartHit = Result.Instance
+            local Visible = (not PartHit or PartHit:IsDescendantOf(PartDescendant) or PartHit:IsDescendantOf(Character))
+
+            -- // Return
+            return Visible
+        end
+    end
+
+    -- // Return
+    return false
+end
+
+-- // Customisable Checking Functions: Get Closest Part
+function Aiming.GetClosestPart()
+    -- // Vars
+    local Character = LocalPlayer.Character
+    local Closest = nil
+    local Shortest = math.huge
+
+    -- // Loop through all players
+    for _, Player in pairs(Players:GetPlayers()) do
+        -- // Check player
+        if Aiming.VisibleCheck and Player == LocalPlayer then
+            continue
+        end
+
+        -- // Check if the player is ignored
+        if Aiming.Ignored.Players[Player.Name] then
+            continue
+        end
+
+        -- // Check team
+        local TeamCheck = false
+        for _, Team in pairs(Aiming.Ignored.Teams) do
+            if Player.Team == Team.Team and Player.TeamColor == Team.TeamColor then
+                TeamCheck = true
+            end
+        end
+        if TeamCheck then
+            continue
+        end
+
+        -- // Check Humanoid
+        if Player.Character and Player.Character:FindFirstChild("Humanoid") and Player.Character.Humanoid.Health > 0 then
+            -- // Loop through parts
+            for _, Part in pairs(Aiming.TargetPart) do
+                -- // Get the part
+                local TargetPart = Player.Character:FindFirstChild(tostring(Part))
+
+                -- // Make sure the part exists
+                if TargetPart then
+                    -- // Check visibility
+                    if Aiming.IsPartVisible(TargetPart, Player.Character) then
+                        -- // Check FOV
+                        local _, OnScreen = CurrentCamera:WorldToViewportPoint(TargetPart.Position)
+                        if OnScreen then
+                            -- // Vars
+                            local Magnitude = (TargetPart.Position - CurrentCamera.CFrame.Position).Magnitude
+
+                            -- // Check distance
+                            if Magnitude < Shortest then
+                                -- // Set vars
+                                Shortest = Magnitude
+                                Closest = TargetPart
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- // Return vars
+    return Closest, Shortest
+end
+
+-- // Run
+function Aiming.Run()
+    -- // Disable if not enabled
+    if not Aiming.Enabled then
+        return
+    end
+
+    -- // Get Closest Player Part
+    Aiming.SelectedPart, Aiming.Selected = Aiming.GetClosestPart()
+
+    -- // Update FOV
+    Aiming.UpdateFOV()
+end
+
+-- // Load
+Aiming.Load = function()
+    -- // Create FOV
+    Aiming.UpdateFOV()
+
+    -- // Render FOV
+    RunService:BindToRenderStep("RenderSilentAimFOV", Enum.RenderPriority.First.Value - 1, function()
+        Aiming.UpdateFOV()
+        Aiming.FOVCircle:Draw()
+    end)
+
+    -- // Loop
+    while Aiming.Enabled do
+        -- // Update
+        Aiming.Run()
+
+        -- // Yield
+        Heartbeat:Wait()
+    end
+
+    -- // Unbind
+    RunService:UnbindFromRenderStep("RenderSilentAimFOV")
+end
+
+-- // Return
+return Aiming
